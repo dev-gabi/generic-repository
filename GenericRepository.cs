@@ -1,89 +1,127 @@
 ﻿using Entities;
-using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Linq.Expressions;
 
 namespace Dal
 {
-
-
-    public class GenericRepository <TEntity> where TEntity: class, IGenericEntity
+    public class GenericRepository <TEntity> where TEntity : class, IGenericEntity
     {
-        internal AppContext context;
+        internal TicketsContext context;
         internal DbSet<TEntity> dbSet;
 
-        public GenericRepository(AppContext _context)
+        public GenericRepository(TicketsContext _context)
         {
-            context = _context;
-            this.dbSet = this.context.Set<TEntity>();
+            this.context = _context;
+            this.dbSet = context.Set<TEntity>();
+            context.ChangeTracker.QueryTrackingBehavior = QueryTrackingBehavior.NoTracking;//with out this line httpPut will throw an exception
         }
-        public IEnumerable<TEntity> GetAll()
+        public virtual IEnumerable<TEntity> Get(
+            Expression<Func<TEntity, bool>> filter = null,
+            string includeProperties = "")
         {
-            return dbSet.ToList();
-        }
+            IQueryable<TEntity> query = dbSet;
 
-        public TEntity GetOneFromSqlRaw(string spName, Dictionary<string, string> colomnNamesWithValues)
-        {
-            string command = CreateStoredProcedureCommand(spName, colomnNamesWithValues);
-            IEnumerable<SqlParameter> sqlParameters = GetSqlParameterList(colomnNamesWithValues);
-            return dbSet.FromSqlRaw(command, sqlParameters.ToArray()).AsEnumerable<TEntity>().FirstOrDefault();
-        }
-
-        public List<TEntity> GetManyFromSqlRaw(string spName, Dictionary<string, string> colomnNamesWithValues)
-        {
-            string command = CreateStoredProcedureCommand(spName, colomnNamesWithValues);
-            IEnumerable<SqlParameter> sqlParameters = GetSqlParameterList(colomnNamesWithValues);
-            return dbSet.FromSqlRaw(command, sqlParameters.ToArray()).AsEnumerable<TEntity>().ToList();
-        }
-        public List<TEntity> GetManyFromSqlRaw(string viewName)
-        {
-            return dbSet.FromSqlRaw(viewName).AsEnumerable<TEntity>().ToList();
-        }
-
-        public void ExecuteSqlRawSP(string spName, Dictionary<string, string> colomnNamesWithValues)
-        {
-
-            string command = CreateStoredProcedureCommand(spName, colomnNamesWithValues);
-            IEnumerable<SqlParameter> sqlParameters = GetSqlParameterList(colomnNamesWithValues);
-
-            context.Database.ExecuteSqlRaw(command, sqlParameters.ToArray());
-        }
-
-        public IQueryable<TEntity> FromSqlRawSP(string spName, Dictionary<string, string> colomnNamesWithValues)
-        {
-
-            string command = CreateStoredProcedureCommand(spName, colomnNamesWithValues);
-            IEnumerable<SqlParameter> sqlParameters = GetSqlParameterList(colomnNamesWithValues);
-
-            return dbSet.FromSqlRaw(command, sqlParameters.ToArray());
-        }
-
-        private string CreateStoredProcedureCommand(string spName, Dictionary<string, string> colomnNamesWithValues)
-        {
-            string command = spName + ' ';
-
-            for (int i = 0; i < colomnNamesWithValues.Count(); i++)
+            if (filter != null)
             {
-                command += $"@{colomnNamesWithValues.ElementAt(i).Key}";
-                if (i + 1 < colomnNamesWithValues.Count) { command += ','; }
+                query = query.Where(filter);
             }
-            return command;
-        }
 
-        private IEnumerable<SqlParameter> GetSqlParameterList(Dictionary<string, string> colomnNamesWithValues)
-        {
-            foreach (var item in colomnNamesWithValues)
+            foreach (var includeProperty in includeProperties.Split
+                (new char[] { ',' }, StringSplitOptions.RemoveEmptyEntries))
             {
-                yield return new SqlParameter($"@{item.Key}", item.Value);
+                query = query.Include(includeProperty);
+
+            }
+
+            return query.ToList();
+        }
+
+        public virtual IQueryable<TEntity> GetIQueryable(
+       	 Expression<Func<TEntity, bool>> filter = null,
+       	 string includeProperties = "")
+            {
+                IQueryable<TEntity> query = dbSet;
+
+                if (filter != null)
+                {
+                    query = query.Where(filter);
+                }
+
+                foreach (var includeProperty in includeProperties.Split
+                    (new char[] { ',' }, StringSplitOptions.RemoveEmptyEntries))
+                {
+                    query = query.Include(includeProperty);
+                }
+                return query;
+           }
+
+
+        public virtual TEntity GetOne(Expression<Func<TEntity, bool>> filter = null)
+        {
+            TEntity entity = context.Set<TEntity>().FirstOrDefault(filter);
+            return entity;
+        }
+
+        public virtual TEntity GetByID(object id)
+        {
+
+            return dbSet.Find(id);
+        }
+
+        public virtual void Add(TEntity entity)
+        {
+            dbSet.Add(entity);
+        }
+
+       	public virtual void AddRange(List<TEntity> entityList)//adding multiple items
+       	 {
+            dbSet.AddRange(entityList);
+       	 }
+
+        public virtual void Delete(object id)
+        {
+            TEntity entityToDelete = dbSet.Find(id);
+            Delete(entityToDelete);
+        }
+
+        public virtual void Delete(TEntity entityToDelete)
+        {
+            if (context.Entry(entityToDelete).State == EntityState.Detached)
+            {
+                dbSet.Attach(entityToDelete);
+            }
+            dbSet.Remove(entityToDelete);
+
+        }
+        public virtual void Delete(Expression<Func<TEntity, bool>> filter = null)
+        {
+            IQueryable<TEntity> query = dbSet;
+            if (filter != null)
+            {
+                query = query.Where(filter);
+            }
+            foreach (var item in query)
+            {
+                if (context.Entry(item).State == EntityState.Detached)
+                {
+                    dbSet.Attach(item);
+                }
+                dbSet.Remove(item);
             }
         }
 
-        public void Delete(string spName, int id)
+        public virtual void Update(TEntity entityToUpdate)
         {
-            context.Database.ExecuteSql($"{spName} {id}");
+            dbSet.Attach(entityToUpdate);
+            context.Entry(entityToUpdate).State = EntityState.Modified;
         }
 
+        public void Save()
+        {
+            context.SaveChanges();
+        }
     }
 }
